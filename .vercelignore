@@ -1,0 +1,7 @@
+# .vercelignore takes precedence over .gitignore — the app package and
+# requirements.txt stay in the deployment.
+.env
+*.log
+.venv/
+__pycache__/
+*.pyc

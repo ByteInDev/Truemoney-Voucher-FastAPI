@@ -1,4 +1,4 @@
-.PHONY: run install quality test docker-build deploy deploy-local
+.PHONY: run install quality test docker-build deploy deploy-local vercel-deploy
 
 run:
 	python -m app.main
@@ -27,3 +27,6 @@ deploy-local:
 	docker build -t truemoney-voucher -f deployments/Dockerfile .
 	docker run -d -p 3000:3000 --name truemoney-voucher truemoney-voucher
 	@echo "Local deployment complete! Service running on http://localhost:3000"
+
+vercel-deploy:
+	vercel --prod

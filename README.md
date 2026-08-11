@@ -130,6 +130,7 @@ make docker-build  # docker build -t truemoney-voucher
 make deploy-local  # docker run -d -p 3000:3000 truemoney-voucher
 make deploy        # scp + venv + uvicorn on a remote server
                    # (host/user hardcoded in the Makefile - edit first!)
+make vercel-deploy # vercel --prod (serverless)
 ```
 
 ## Architecture (tl;dr)
@@ -161,6 +162,21 @@ make test            # pytest (validation + HTTP contract via TestClient)
 
 The suite runs offline — the real curl_cffi session is stubbed out, so no
 request leaves the machine.
+
+## Deploy to Vercel
+
+`api/index.py` exports the FastAPI app; Vercel's Python runtime serves it
+as ASGI and `vercel.json` rewrites every path into the function
+(`python3.12`, `maxDuration: 60`). curl_cffi publishes manylinux wheels,
+so the browser-mimicking transport works on Lambda.
+
+```bash
+make vercel-deploy           # = vercel --prod
+```
+
+**Serverless caveat** — the shared curl_cffi session starts cold per
+function instance, so `cf_clearance` cannot stay warm between requests and
+Cold Start adds latency (same trade-off as the other ports).
 
 ## Disclaimer
 

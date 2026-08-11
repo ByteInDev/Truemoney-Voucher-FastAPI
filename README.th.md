@@ -129,6 +129,7 @@ make docker-build  # docker build -t truemoney-voucher
 make deploy-local  # docker run -d -p 3000:3000 truemoney-voucher
 make deploy        # scp + venv + uvicorn ไปยัง remote server
                    # (host/user ฝังใน Makefile - แก้ไขก่อนใช้งาน!)
+make vercel-deploy # vercel --prod (serverless)
 ```
 
 ## สถาปัตยกรรม (โดยย่อ)
@@ -159,6 +160,21 @@ make test            # pytest (validation + HTTP contract ผ่าน TestClien
 
 ชุดเทสต์รันแบบออฟไลน์ — เซสชัน curl_cffi ตัวจริงถูกแทนด้วย stub ไม่มีการส่ง
 request ออกนอกเครื่องเลย
+
+## Deploy บน Vercel
+
+`api/index.py` export แอป FastAPI; รันไทม์ Python ของ Vercel เสิร์ฟเป็น ASGI
+และ `vercel.json` rewrite ทุก path เข้ามาที่ฟังก์ชันนี้
+(`python3.12`, `maxDuration: 60`) curl_cffi เผยแพร่ manylinux wheels
+จึงติดตั้งและรันบน Lambda ได้
+
+```bash
+make vercel-deploy           # = vercel --prod
+```
+
+**ข้อควรระวังแบบ serverless** — curl_cffi session ร่วมเริ่มเย็นทุก function
+instance ดังนั้น `cf_clearance` อุ่นค้างระหว่าง request ไม่ได้ และ Cold Start
+เพิ่ม latency (การแลกเปลี่ยนแบบเดียวกับอีกสองพอร์ต)
 
 ## ข้อควรระวัง
 
