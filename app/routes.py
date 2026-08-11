@@ -16,6 +16,11 @@ router = APIRouter()
 
 
 def get_client(request: Request) -> Client:
+    # Lazy: the curl_cffi session is only created on the first redeem, so
+    # liveness probes and validation errors never pay session warm-up
+    # (important on serverless, where every instance starts cold).
+    if request.app.state.tm is None:
+        request.app.state.tm = Client()
     return request.app.state.tm
 
 

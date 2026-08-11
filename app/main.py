@@ -23,10 +23,11 @@ logger = logging.getLogger("truemoney-voucher")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.tm = Client()
+    app.state.tm = None  # created lazily on the first redeem (serverless-friendly)
     logger.info("server starting addr=%s", app.state.cfg.addr)
     yield
-    app.state.tm.close()
+    if app.state.tm is not None:
+        app.state.tm.close()
     logger.info("server stopped")
 
 

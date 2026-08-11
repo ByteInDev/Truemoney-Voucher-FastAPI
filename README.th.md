@@ -172,9 +172,17 @@ request ออกนอกเครื่องเลย
 make vercel-deploy           # = vercel --prod
 ```
 
-**ข้อควรระวังแบบ serverless** — curl_cffi session ร่วมเริ่มเย็นทุก function
-instance ดังนั้น `cf_clearance` อุ่นค้างระหว่าง request ไม่ได้ และ Cold Start
-เพิ่ม latency (การแลกเปลี่ยนแบบเดียวกับอีกสองพอร์ต)
+**ข้อควรระวังแบบ serverless:**
+
+- curl_cffi session สร้างแบบ **lazy** — เฉพาะ redeem ครั้งแรก ไม่ใช่ตอน
+  bootstrap ทำให้ `/status`, `/` และ validation error ยังเร็วแม้ instance
+  เย็น; และอุ่นค้างข้าม function instance ไม่ได้
+- Cold Start เพิ่ม latency (การแลกเปลี่ยนแบบเดียวกับอีกสองพอร์ต)
+
+**ประสิทธิภาพบน Free (Hobby) plan:** ฟังก์ชันรันได้แค่ `iad1` (US East)
+— RTT ไทย→เวอร์จิเนีย (~200 ms) แก้ไม่ได้บน free plan
+`maxDuration: 60` ใช้ได้ วัดด้วย client แบบ keep-alive (เช่น `httpx`)
+อย่าใช้ `curl.exe` ใหม่ทุกครั้งเพื่อดูเวลา server จริง
 
 ## ข้อควรระวัง
 

@@ -174,9 +174,18 @@ so the browser-mimicking transport works on Lambda.
 make vercel-deploy           # = vercel --prod
 ```
 
-**Serverless caveat** — the shared curl_cffi session starts cold per
-function instance, so `cf_clearance` cannot stay warm between requests and
-Cold Start adds latency (same trade-off as the other ports).
+**Serverless caveats:**
+
+- the curl_cffi session is created **lazily** — only on the first redeem,
+  never at bootstrap, so `/status`, `/` and validation errors stay fast on
+  cold instances; it also cannot stay warm between function instances
+- Cold Start adds latency (same trade-off as the other ports)
+
+**Performance on the Free (Hobby) plan:** functions run only in `iad1`
+(US East) — Thailand→Virginia RTT (~200 ms) is fixed and unavoidable, and
+cannot be configured away on a free plan. `maxDuration: 60` is honored.
+Measure with a keep-alive client (e.g. `httpx`), not a fresh `curl.exe`
+per request, to see actual server time.
 
 ## Disclaimer
 
