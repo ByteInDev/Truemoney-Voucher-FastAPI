@@ -90,6 +90,52 @@ class CorsMiddleware:
         await self.app(scope, receive, send_wrapper)
 
 
+class LatencyMiddleware:
+    """Records the last latency (ms) of every handled route.
+
+    The snapshot lives on app.state.latency_ms (a plain dict keyed by
+    normalized route pattern, e.g. "/truemoney/{code}/{mobile}" ->
+    "/truemoney") and is surfaced on the root endpoint as {"ms": {...}}.
+    Unknown (unrouted) paths keep their raw path as the key.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        started = time.monotonic()
+        await self.app(scope, receive, send)
+
+        # scope["route"] is set by the router during the inner call; the
+        # app object carries the shared state dict.
+        state = scope.get("app")
+        if state is None:
+            return
+        snapshot = getattr(state.state, "latency_ms", None)
+        if snapshot is None:
+            snapshot = {}
+            state.state.latency_ms = snapshot
+        snapshot[_latency_key(scope)] = round((time.monotonic() - started) * 1000)
+
+
+def _latency_key(scope: Scope) -> str:
+    """Map a route pattern to the stable root key: strip path params."""
+    route = scope.get("route")
+    path = route.path if route is not None else scope.get("path", "")
+    if path == "":
+        return "/"
+    brace = path.find("{")
+    if brace != -1:
+        path = path[:brace].rstrip("/")
+        if path == "":
+            return "/"
+    return path
+
+
 class LoggingMiddleware:
     """Logs one line per request: method, masked path, status, duration."""
 

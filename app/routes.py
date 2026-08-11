@@ -51,11 +51,12 @@ def status() -> Response:
 
 
 @router.api_route("/", methods=["GET", "POST"])
-def root() -> dict:
+def root(request: Request) -> dict:
+    # Minimal info: the last observed latency (ms) of every registered
+    # route + a service banner, e.g.
+    # {"ms": {"/": 1, "/status": 0, "/truemoney": 342},
+    #  "message": "ByteInDev Service"}
     return {
-        "service": "truemoney-voucher",
-        "routes": [
-            "GET|POST /truemoney/{code}/{mobile}  redeem voucher",
-        "GET|POST /status                     liveness probe",
-        ],
+        "ms": request.app.state.latency_ms,
+        "message": "ByteInDev Service",
     }

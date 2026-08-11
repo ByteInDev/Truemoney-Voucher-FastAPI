@@ -1,5 +1,6 @@
 """Application entrypoint (mirrors cmd/api/main.go + internal/server)."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import load as load_config
-from .middleware import CorsMiddleware, LoggingMiddleware, RawPathMiddleware
+from .middleware import CorsMiddleware, LatencyMiddleware, LoggingMiddleware, RawPathMiddleware
 from .models import AppError, ErrNotFound, ErrRecovered, error_response
 from .routes import router
 from .truemoney import Client
@@ -21,13 +22,44 @@ logging.basicConfig(
 logger = logging.getLogger("truemoney-voucher")
 
 
+async def _warm_loop(app: FastAPI, interval: float) -> None:
+    """Keep the client's pooled connection and cf_clearance warm.
+
+    One probe per interval, off the event loop (to_thread). Mirrors
+    Go's StartWarmer: without it the first redeem after an idle gap pays
+    the connection setup cost, and a cold cf_clearance risks a challenge.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(app.state.tm.probe)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - probe() already swallows; belt and suspenders
+            logger.debug("warm probe unexpected error", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.tm = None  # created lazily on the first redeem (serverless-friendly)
+    # The client (and its curl_cffi session) is created eagerly so the
+    # connection warmer can run; redeems share the same session.
+    app.state.tm = Client()
+
+    warm_task = None
+    if app.state.cfg.warm_interval > 0:
+        warm_task = asyncio.create_task(_warm_loop(app, app.state.cfg.warm_interval))
+        logger.info("connection warmer interval_s=%s", app.state.cfg.warm_interval)
+
     logger.info("server starting addr=%s", app.state.cfg.addr)
     yield
-    if app.state.tm is not None:
-        app.state.tm.close()
+
+    if warm_task is not None:
+        warm_task.cancel()
+        try:
+            await warm_task
+        except asyncio.CancelledError:
+            pass
+    app.state.tm.close()
     logger.info("server stopped")
 
 
@@ -42,6 +74,9 @@ def create_app() -> FastAPI:
         openapi_url=None,
     )
     app.state.cfg = cfg
+    # Per-route latency snapshot (ms), filled by LatencyMiddleware and
+    # surfaced on the root endpoint.
+    app.state.latency_ms = {}
 
     # CORS allows any origin so the API can be consumed from scripts and
     # browser clients on other domains (mirrors Go's cors middleware:
@@ -53,6 +88,8 @@ def create_app() -> FastAPI:
     # Must wrap the router (added last => innermost) so routing sees the
     # raw path as Go's mux does.
     app.add_middleware(RawPathMiddleware)
+    # Outermost: measures the full request (including CORS and routing).
+    app.add_middleware(LatencyMiddleware)
 
     app.include_router(router)
 

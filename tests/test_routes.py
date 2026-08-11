@@ -51,12 +51,21 @@ def test_post_status_works_too(client: TestClient) -> None:
     assert resp.status_code == 200
 
 
-def test_root_returns_service_info(client: TestClient) -> None:
+def test_root_returns_per_path_ms_and_message(client: TestClient) -> None:
+    client.get("/status")
+    client.get("/truemoney/ABCD1234EFGH/0812345678")
     resp = client.get("/")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["service"] == "truemoney-voucher"
-    assert any("truemoney" in r for r in body["routes"])
+    assert body["message"] == "ByteInDev Service"
+    # Every path appears after it has been served once; the root's own
+    # entry is recorded when the *next* request completes (the snapshot is
+    # read before this request's latency lands in it).
+    assert set(body["ms"]) == {"/status", "/truemoney"}
+    assert all(isinstance(v, int) for v in body["ms"].values())
+
+    resp = client.get("/")
+    assert "/" in resp.json()["ms"]
 
 
 def test_unknown_paths_are_json_404(client: TestClient) -> None:

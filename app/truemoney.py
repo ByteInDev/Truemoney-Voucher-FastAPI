@@ -7,14 +7,29 @@ TrueMoney domain logic: endpoints, payloads, headers and validation.
 """
 
 import json
+import logging
 import re
+import threading
+import time
 import urllib.parse
+from collections import OrderedDict
 from typing import Any
 
 from curl_cffi import requests
 
 CAMPAIGN_REFERER = "https://gift.truemoney.com/campaign/card"
 REDEEM_URL = "https://gift.truemoney.com/campaign/vouchers/%s/redeem"
+
+# Deliberately invalid probe values: TrueMoney answers with a JSON error
+# envelope, so a probe refreshes the pooled connection and cf_clearance
+# without ever touching the redeem cache.
+PROBE_CODE = "PROBE000000"
+PROBE_MOBILE = "0000000000"
+
+# Compiled validation patterns (module-level: re caching is per call).
+VOUCHER_PATTERN = re.compile(r"[A-Za-z0-9\-_]+")
+MOBILE_CLEAN_PATTERN = re.compile(r"[ \-]")
+MOBILE_PATTERN = re.compile(r"0\d{9}")
 
 # Browsers headers mirror Firefox's; the UA version must stay in sync
 # with the TLS/HTTP2 fingerprint (Firefox 148 in the Go version, curl_cffi
@@ -43,17 +58,56 @@ class Client:
     One Client is shared by the whole service, so its cookie jar is common
     across all users. That is intentional — a warm cf_clearance improves
     stability against Cloudflare — but cookies are not isolated per caller.
+
+    Successful redeem answers are cached in-process keyed by (code, mobile)
+    for cache_ttl seconds (default 10 minutes, matching the Go version).
+    A client that times out and retries replays the real answer of the
+    first attempt instead of re-redeeming the voucher; transport failures
+    and error envelopes are never cached.
     """
 
-    def __init__(self, timeout: float = 15.0) -> None:
+    def __init__(
+        self,
+        timeout: float = 15.0,
+        cache_ttl: float = 600.0,
+        cache_size: int = 1024,
+    ) -> None:
         self._session = requests.Session(
             impersonate="firefox",
             timeout=timeout,
             headers=BROWSER_HEADERS,
         )
+        self._cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+        self._cache_ttl = cache_ttl
+        self._cache_size = cache_size
+        self._lock = threading.Lock()
+        self._warm_lock = threading.Lock()  # single-flight: no stacked probes
 
     def close(self) -> None:
         self._session.close()
+
+    def probe(self) -> None:
+        """Fire one deliberately invalid redeem to keep the pooled
+        connection and cf_clearance warm (mirrors the Go version's probe,
+        which keeps the first real redeem off the ~120 ms connection
+        setup path after an idle gap).
+
+        The VOUCHER_NOT_FOUND answer is an error envelope, so it is never
+        cached, and failures are swallowed (a probe must never affect
+        traffic). Concurrent probes skip if one is already in flight.
+        """
+        if not self._warm_lock.acquire(blocking=False):
+            return
+        try:
+            self._session.post(
+                REDEEM_URL % PROBE_CODE,
+                json={"mobile": PROBE_MOBILE},
+                headers={"Content-Type": "application/json", "Referer": CAMPAIGN_REFERER},
+            )
+        except Exception as err:  # noqa: BLE001 - best-effort by design
+            logging.getLogger("truemoney-voucher").debug("warm probe failed: %s", err)
+        finally:
+            self._warm_lock.release()
 
     def redeem(self, voucher: str, mobile: str) -> dict[str, Any]:
         """Redeem a TrueWallet voucher for the given phone number.
@@ -64,12 +118,46 @@ class Client:
         code = _voucher_code(voucher)
         phone = _mobile_number(mobile)
 
+        key = f"{code}|{phone}"
+        cached = self._cache_get(key)
+        if cached is not None:
+            return cached
+
         resp = self._session.post(
             REDEEM_URL % code,
             json={"mobile": phone},
             headers={"Content-Type": "application/json", "Referer": CAMPAIGN_REFERER},
         )
-        return _valid_json(resp.content, resp.status_code)
+        payload = _valid_json(resp.content, resp.status_code)
+        if _is_success(payload):
+            self._cache_put(key, payload)
+        return payload
+
+    def _cache_get(self, key: str) -> dict[str, Any] | None:
+        now = time.monotonic()
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            ts, payload = entry
+            if now - ts > self._cache_ttl:
+                del self._cache[key]
+                return None
+            self._cache.move_to_end(key)  # LRU touch
+            return payload
+
+    def _cache_put(self, key: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._cache[key] = (time.monotonic(), payload)
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)  # evict oldest insertion
+
+
+def _is_success(payload: dict[str, Any]) -> bool:
+    """True only for the {"status": {"code": "SUCCESS"}} answer."""
+    status = payload.get("status")
+    return isinstance(status, dict) and status.get("code") == "SUCCESS"
 
 
 def _voucher_code(voucher: str) -> str:
@@ -94,7 +182,7 @@ def _voucher_code(voucher: str) -> str:
         raise ValidationError("invalid voucher code")
     if not voucher:
         raise ValidationError("voucher code is required")
-    if not re.fullmatch(r"[A-Za-z0-9\-_]+", voucher):
+    if not VOUCHER_PATTERN.fullmatch(voucher):
         raise ValidationError("invalid voucher code")
 
     return voucher
@@ -102,8 +190,8 @@ def _voucher_code(voucher: str) -> str:
 
 def _mobile_number(phone: str) -> str:
     """Validate and normalize a Thai mobile number (10 digits, starts with 0)."""
-    phone = re.sub(r"[ \-]", "", phone.strip())
-    if not re.fullmatch(r"0\d{9}", phone):
+    phone = MOBILE_CLEAN_PATTERN.sub("", phone.strip())
+    if not MOBILE_PATTERN.fullmatch(phone):
         raise ValidationError("mobile number must contain 10 digits and start with 0")
     return phone
 
