@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# Truemoney-Voucher
+# Truemoney-Voucher (FastAPI)
 
 **REST API for redeeming TrueMoney gift vouchers** — Python FastAPI, no database
 
