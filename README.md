@@ -165,10 +165,13 @@ request leaves the machine.
 
 ## Deploy to Vercel
 
-`api/index.py` exports the FastAPI app; Vercel's Python runtime serves it
-as ASGI and `vercel.json` rewrites every path into the function
-(`python3.12`, `maxDuration: 60`). curl_cffi publishes manylinux wheels,
-so the browser-mimicking transport works on Lambda.
+Vercel's FastAPI preset auto-detects the framework from `requirements.txt`
+and loads the `app` instance from `app/main.py` (a supported Python
+entrypoint), so **no rewrites are needed** — every path reaches the
+FastAPI router untouched. `vercel.json` only tunes the single function
+(`maxDuration: 60`). The Python version is pinned via `.python-version`
+(3.12, Vercel's default). curl_cffi publishes manylinux wheels, so the
+browser-mimicking transport works on Lambda.
 
 ```bash
 make vercel-deploy           # = vercel --prod

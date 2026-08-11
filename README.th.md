@@ -163,10 +163,12 @@ request ออกนอกเครื่องเลย
 
 ## Deploy บน Vercel
 
-`api/index.py` export แอป FastAPI; รันไทม์ Python ของ Vercel เสิร์ฟเป็น ASGI
-และ `vercel.json` rewrite ทุก path เข้ามาที่ฟังก์ชันนี้
-(`python3.12`, `maxDuration: 60`) curl_cffi เผยแพร่ manylinux wheels
-จึงติดตั้งและรันบน Lambda ได้
+FastAPI preset ของ Vercel ตรวจจับ framework จาก `requirements.txt`
+อัตโนมัติ และโหลด instance `app` จาก `app/main.py` (Python entrypoint
+ที่รองรับ) — **ไม่ต้องใช้ rewrites เลย** ทุก path ถึง FastAPI router แบบ
+ไม่เปลี่ยนรูป `vercel.json` ปรับแค่ฟังก์ชันเดียว (`maxDuration: 60`)
+เวอร์ชัน Python pin ด้วย `.python-version` (3.12, default ของ Vercel)
+curl_cffi เผยแพร่ manylinux wheels จึงติดตั้งและรันบน Lambda ได้
 
 ```bash
 make vercel-deploy           # = vercel --prod
